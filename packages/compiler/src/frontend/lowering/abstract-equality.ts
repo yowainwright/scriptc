@@ -13,7 +13,7 @@ import {
   isUnitType,
   typeEquals,
 } from "../../ir/ir.js";
-import { boolLit, numLit, varRef } from "../../ir/build.js";
+import { boolLit, numLit, unitSequenceEffects, varRef } from "../../ir/build.js";
 import * as ts from "../ts7/adapter.js";
 import { refuseShadowedImplicitReader } from "./handle-properties.js";
 import type { Lowerer } from "./lowerer.js";
@@ -343,7 +343,10 @@ export function lowerAbstractEquality(
   const stmts: IrStmt[] = [];
   const stable = (value: IrExpr, name: string): IrExpr => {
     if (isUnitType(value.type)) {
-      if (value.kind !== "unitLit") stmts.push({ kind: "exprStmt", expr: value, loc });
+      const effects: IrStmt[] = unitSequenceEffects(value) ?? [
+        { kind: "exprStmt", expr: value, loc },
+      ];
+      stmts.push(...effects);
       return {
         kind: "unitLit",
         unit: value.type.kind === "nullT" ? "null" : "undefined",
