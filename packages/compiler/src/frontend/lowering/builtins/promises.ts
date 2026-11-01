@@ -5,7 +5,7 @@ import { promiseResolveThenable, thenableParts } from "../thenables.js";
 import { InternalCompilerError } from "../../../errors.js";
 import * as ts from "../../ts7/adapter.js";
 import type { Lowerer } from "../lowerer.js";
-import { countedFor, varRef } from "../../../ir/build.js";
+import { countedFor, unitSequenceEffects, varRef } from "../../../ir/build.js";
 import { arrayValueStore, optionalElementValue, primitiveElement } from "../array-values.js";
 import {
   type MaybePromiseUnion,
@@ -247,7 +247,8 @@ function tupleEntryPromises(
     : elems.map((e): IrExpr => {
         if (e.kind === "unitLit") return e;
         if (isUnitType(e.type)) {
-          staged.push({ kind: "exprStmt", expr: e, loc });
+          const effects: IrStmt[] = unitSequenceEffects(e) ?? [{ kind: "exprStmt", expr: e, loc }];
+          staged.push(...effects);
           return {
             kind: "unitLit",
             unit: e.type.kind === "nullT" ? "null" : "undefined",
@@ -343,12 +344,13 @@ function tupleEntryPromises(
       // A unit entry's value is its type's one value; the promise only
       // takes its place in the combinator.
       const resolved = fulfilledWith(null);
+      const stmts: IrStmt[] = unitSequenceEffects(e) ?? [{ kind: "exprStmt", expr: e, loc }];
       promise =
-        e.kind === "unitLit"
+        stmts.length === 0
           ? resolved
           : {
               kind: "seqExpr",
-              stmts: [{ kind: "exprStmt", expr: e, loc }],
+              stmts,
               result: resolved,
               type: voidPromise,
               loc,

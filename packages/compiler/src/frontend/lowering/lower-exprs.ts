@@ -15,7 +15,14 @@ import { lowerWebAssemblyValue, refuseWebAssemblyUse } from "./builtins/webassem
 import { islandFunctionView, lowerIslandExpr } from "./lower-node-island.js";
 import { lowerOwnKeyQuestion } from "./own-key-lists.js";
 import { lowerAwaitedUniformPromiseAll, promiseAllValueUnread } from "./builtins/promises.js";
-import { dynUndefinedExpr, nodeThrowExpr, numLit, strLit, varRef } from "../../ir/build.js";
+import {
+  dynUndefinedExpr,
+  nodeThrowExpr,
+  numLit,
+  strLit,
+  unitSequenceEffects,
+  varRef,
+} from "../../ir/build.js";
 import { InternalCompilerError } from "../../errors.js";
 /* Expression lowering: the expression dispatch (lowerExpr), literals
  * (array/object/regex/template), operators (binary incl. compound targets,
@@ -696,22 +703,21 @@ function lowerExprInner(lowerer: Lowerer, expr: ts.Expression): IrExpr {
   }
   if (ts.isAsExpression(expr) || ts.isTypeAssertion(expr)) return lowerer.lowerAsExpression(expr);
   if (ts.isVoidExpression(expr)) {
-    // `void e` in VALUE position is the undefined value after evaluating
-    // e. A side-effect-free operand drops entirely (`void 0` — the
-    // classic undefined spelling; the surrounding slot's coercion wraps
-    // the unit like any bare `undefined`). Effectful operands compile
-    // where the value is DISCARDED — statement position
-    // (lowerExprStatement) and void-returning arrow bodies — but here
-    // the value is consumed and the effect would need to sequence before
-    // it, which no expression shape carries: fence by name.
-    if (sideEffectFreeOptionValue(expr.expression)) {
-      return { kind: "unitLit", unit: "undefined", type: UNDEFINED_T, loc: locOf(expr) };
-    }
-    lowerer.unsupported(
-      "SC1090",
-      expr,
-      "'void' with an effectful operand in value position (hoist the operand to its own statement — statement-position 'void e' and void-returning arrow bodies compile)",
-    );
+    // `void e` yields undefined after evaluating e. A side-effect-free
+    // operand (`void 0`) drops entirely. Otherwise, sequence its effects
+    // before the undefined result; the surrounding slot supplies the
+    // unit's representation through coercion.
+    const result: IrExpr = { kind: "unitLit", unit: "undefined", type: UNDEFINED_T, loc };
+    if (sideEffectFreeOptionValue(expr.expression)) return result;
+    const stmts = [lowerer.lowerExprStatement(expr.expression)];
+    const sequence: IrExpr = {
+      kind: "seqExpr",
+      stmts,
+      result,
+      type: UNDEFINED_T,
+      loc,
+    };
+    return sequence;
   }
   if (ts.isTypeOfExpression(expr)) return lowerTypeofExpr(lowerer, expr, loc);
   if (ts.isIdentifier(expr)) {
@@ -2428,11 +2434,15 @@ export function ensureBool(lowerer: Lowerer, e: IrExpr, node: ts.Expression): Ir
     // still evaluates (side effects), the test is constant.
     return { kind: "toBool", operand: e, type: BOOL, loc: e.loc };
   }
-  // Bare unit values (undefined/null literals, the capability-probe
-  // reads that answer them): ToBoolean is constantly false. Units have
-  // no effectful producers, so folding the read away loses nothing.
+  // Bare unit values are always falsy. Preserve any sequenced effects
+  // before returning the constant false.
   if (isUnitType(e.type)) {
-    return { kind: "boolLit", value: false, type: BOOL, loc: e.loc };
+    const loc = e.loc;
+    const result: IrExpr = { kind: "boolLit", value: false, type: BOOL, loc };
+    const stmts = unitSequenceEffects(e);
+    if (!stmts?.length) return result;
+    const sequence: IrExpr = { kind: "seqExpr", stmts, result, type: BOOL, loc };
+    return sequence;
   }
   lowerer.badType(node, lowerer.typeOf(node));
 }
