@@ -1719,7 +1719,12 @@ static inline void scr_dyn_weak_dispose(ScrDyn *d) {
  * cannot keep the change: this table does, for as long as the instance
  * lives (the dispose hook drops its entry, scr_instance_proto_disposed).
  * `prototype` is retained, or NULL for a null prototype. While the table
- * is empty, every reader returns on its count. */
+ * is empty, every reader returns on its count.
+ *
+ * INVARIANT: releasing a prototype can free instances it owns, and their
+ * disposal (scr_instance_proto_disposed) moves entries. So every mutation
+ * finishes with the table before it releases anything, and nothing holds
+ * an entry pointer across a release. */
 typedef struct {
   void *instance;
   ScrDyn *prototype;
@@ -1769,8 +1774,13 @@ static void scr_instance_proto_set(void *instance, ScrDyn *prototype) {
   scr_dispose_note(instance);
   ScrInstanceProto *entry = scr_instance_proto_find(instance);
   if (entry) {
-    scr_dyn_release(entry->prototype);
+    /* The entry holds the replacement before the old prototype goes: the
+     * release can free other instances the old prototype owned, and their
+     * disposal moves entries of this table, so no entry pointer is used
+     * after it. */
+    ScrDyn *old = entry->prototype;
     entry->prototype = held;
+    scr_dyn_release(old);
     return;
   }
   /* Keep the table at most half full. */

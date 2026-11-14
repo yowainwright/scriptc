@@ -1,4 +1,5 @@
 import { isCheckerPanic } from "../../diagnostics/diagnostic.js";
+import { checkedIterableSpread } from "./checked-iterable-spread.js";
 import { mayReplacePrototype } from "./class-method-mutations.js";
 import { lowerIteratorFromDyn } from "./iterator-prototype.js";
 import {
@@ -13194,12 +13195,33 @@ export function lowerObjectMethodCall(
     const declared = lowerObjectMethodCall(lowerer, call, access, value);
     if (declared === null) return null;
     const boxed = (): IrExpr => lowerer.coerceToExpected(value, DYN);
+    // The method the instance's prototype answers, called with the
+    // instance as its receiver; a spread argument drains its iterable as
+    // the call does.
+    const spreads: { arg: number; what: string }[] = [];
     const dynamic: IrExpr = {
-      kind: "dynInvoke",
-      recv: boxed(),
-      method: access.name.text,
+      kind: "dynCall",
+      callee: {
+        kind: "dynKeyGet",
+        value: boxed(),
+        key: { kind: "strLit", value: access.name.text, type: STRING, loc },
+        type: DYN,
+        loc,
+      },
+      receiver: boxed(),
       calleeName: ts.getTextOfNode(access),
-      args: call.arguments.nodes.map((argument) => lowerer.lowerExprExpecting(argument, DYN)),
+      args: call.arguments.nodes.map((argument, index) => {
+        if (!ts.isSpreadElement(argument)) return lowerer.lowerExprExpecting(argument, DYN);
+        const spelling = ts.getTextOfNode(argument.expression);
+        spreads.push({ arg: index, what: spelling });
+        return checkedIterableSpread(
+          lowerer,
+          lowerer.lowerExpr(argument.expression),
+          spelling,
+          loc,
+        );
+      }),
+      ...(spreads.length > 0 ? { spreads } : {}),
       type: DYN,
       loc,
     };

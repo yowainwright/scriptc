@@ -17,6 +17,9 @@ class Shape {
   get label(): string {
     return "<" + this.name + ">";
   }
+  sum(...values: number[]): number {
+    return values.reduce((total, value) => total + value, this.name.length);
+  }
 }
 class Square extends Shape {
   side = 2;
@@ -51,11 +54,31 @@ try {
   console.log("not a function:", error instanceof TypeError);
 }
 
+// The key of `in` is evaluated before the receiver: a key that rebinds the
+// receiver asks the new one.
+let target: Square = kept;
+const pick = (): string => {
+  target = moved;
+  return "area";
+};
+console.log(pick() in target, "area" in target);
+
+// A spread argument, on an instance with its class's prototype and on one
+// whose prototype has no such method.
+const numbers = [1, 2, 3];
+console.log(kept.sum(...numbers));
+try {
+  moved.sum(...numbers);
+} catch (error) {
+  console.log("spread call:", error instanceof TypeError);
+}
+
 // Through a union of classes, and back to its own class's prototype.
 const shapes: (Square | Circle)[] = [new Square("a"), new Circle("b"), moved];
 console.log(shapes.map((shape) => `${shape instanceof Circle}:${shape instanceof Shape}`).join(" "));
 Object.setPrototypeOf(moved, Object.getPrototypeOf(kept));
 console.log(moved.describe(), moved.area(), moved instanceof Circle, moved instanceof Square);
+console.log(moved.sum(...numbers), moved.sum(4, ...numbers, 5));
 
 // A null prototype.
 const bare = new Circle("bare");

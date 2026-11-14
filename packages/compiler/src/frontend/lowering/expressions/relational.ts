@@ -1,5 +1,6 @@
 /* instanceof and in, including private-name and runtime-key in. */
-import { reprototypedGuard } from "../reprototyped-reads.js";
+import { withoutParentheses } from "../../outer-expressions.js";
+import { reprototypedGuard, reprototypedReceiver } from "../reprototyped-reads.js";
 import { mayReplacePrototype } from "../class-method-mutations.js";
 import { consoleHasKey, isConsoleExpression } from "../coercions/console-records.js";
 import { lowerIteratorInstanceOf } from "../iterator-prototype.js";
@@ -2694,8 +2695,41 @@ export function lowerInExpression(
     return lowerPrivateIn(lowerer, expr, expr.left, loc);
   }
   // `key in value` on an instance whose prototype may have been replaced
-  // (reprototyped-reads.ts).
-  if (lowerer.mapTypeOf(lowerer.typeOf(expr.left))?.kind === "string") {
+  // (reprototyped-reads.ts). The key is evaluated first: one that can run
+  // code is held in a local, and the dynamic `in` answers for every
+  // instance; a literal or a name is read where the guard needs it.
+  const keyNode = withoutParentheses(expr.left);
+  const keyType = lowerer.mapTypeOf(lowerer.typeOf(expr.left))?.kind;
+  if (keyType === "string" && !ts.isStringLiteralLike(keyNode) && !ts.isIdentifier(keyNode)) {
+    const receiver = reprototypedReceiver(lowerer, expr.right);
+    if (receiver !== null) {
+      const key = lowerer.declareHiddenLocal("%inKey", STRING);
+      return {
+        kind: "seqExpr",
+        stmts: [
+          {
+            kind: "varDecl",
+            localId: key.id,
+            init: lowerer.lowerExprExpecting(expr.left, STRING),
+            loc,
+          },
+        ],
+        result: {
+          kind: "libCall",
+          fn: "dyn.in",
+          args: [
+            lowerer.coerceToExpected(lowerer.lowerExpr(receiver), DYN),
+            varRef(key.id, STRING, loc),
+          ],
+          type: BOOL,
+          loc,
+        },
+        type: BOOL,
+        loc,
+      };
+    }
+  }
+  if (keyType === "string") {
     const answer = reprototypedGuard(
       lowerer,
       expr,

@@ -19,7 +19,7 @@ const guarded = new Set<ts.Node>();
 
 /** The receiver `node`, a name or `this` whose value is an instance of a
  * class a setPrototypeOf call may reprototype; null otherwise. */
-function reprototypedReceiver(lowerer: Lowerer, node: ts.Expression): ts.Expression | null {
+export function reprototypedReceiver(lowerer: Lowerer, node: ts.Expression): ts.Expression | null {
   const receiver = withoutParentheses(node);
   if (!ts.isIdentifier(receiver) && receiver.kind !== ts.SyntaxKind.ThisKeyword) return null;
   const type = lowerer.mapTypeOf(lowerer.typeOf(receiver));
