@@ -149,6 +149,8 @@ export interface DeferredArrayClassCheck {
   info: ClassInfo;
   message: string;
   loc: SrcLoc;
+  /** The call whose written arguments evaluate before the TypeError. */
+  call: ts.CallExpression;
 }
 
 /** The class object of `value`, an array the checker types as an instance
@@ -182,20 +184,22 @@ function checkedArrayClassView(
   const ref = (): IrExpr =>
     repeat ? value : { kind: "varRef", localId: stable!.id, type: value.type, loc };
   const access = node.parent;
-  const call =
+  const callExpr =
     access !== undefined &&
     ts.isCallExpression(access.parent) &&
-    access.parent.expression === access;
+    access.parent.expression === access
+      ? access.parent
+      : null;
   const className = info.def.jsName ?? info.def.name;
-  const message = call
-    ? `${v8CalleeText(access)} is not a function`
+  const message = callExpr
+    ? `${v8CalleeText(callExpr.expression)} is not a function`
     : `Cannot ${action} '${member}' of an array that is not a ${className} instance`;
   // A method call reads the callee, then evaluates the arguments, and only
   // then finds the callee is not a function: the call's lowering tests the
   // class after the arguments (applyDeferredArrayClassCheck).
-  if (call && deferred !== undefined) {
+  if (callExpr !== null && deferred !== undefined) {
     const local = lowerer.declareHiddenLocal("%arrayClassRecv", value.type);
-    deferred.push({ local: local.id, value, info, message, loc });
+    deferred.push({ local: local.id, value, info, message, loc, call: callExpr });
     return arrayClassView(info, { kind: "varRef", localId: local.id, type: value.type, loc }, loc);
   }
   const result: IrExpr = {
@@ -219,9 +223,10 @@ function checkedArrayClassView(
 /** The method call `result` with its receiver's deferred class test: the
  * receiver array and each argument evaluate in order into locals, and the
  * call runs on the class view only when the array is an instance, where
- * Node's "is not a function" TypeError is thrown otherwise. A call shape
- * without the receiver in its first argument tests the class before the
- * call instead. */
+ * Node's "is not a function" TypeError is thrown otherwise. For a call
+ * shape without the receiver in its first argument, an array that is not
+ * an instance evaluates the arguments on a path of its own before the
+ * TypeError. */
 export function applyDeferredArrayClassCheck(
   lowerer: Lowerer,
   result: IrExpr,
@@ -273,9 +278,32 @@ export function applyDeferredArrayClassCheck(
   };
   const rewritten = rewrite(result);
   if (found) return rewritten;
+  // Another call shape (a method a program can replace through its
+  // prototype reads its slot from the instance before the arguments): an
+  // array that is not an instance evaluates the written arguments, packed
+  // as the dynamic arguments of a call, and then throws, and an instance
+  // runs the call as it was lowered.
+  const effects = lowerer.completeArgs(
+    check.call.arguments.nodes,
+    [{ type: DYN, mode: "dynRest" }],
+    loc,
+    check.call,
+  );
   return {
     kind: "seqExpr",
-    stmts: [{ kind: "varDecl", localId: local, init: value, loc }, failUnless],
+    stmts: [
+      { kind: "varDecl", localId: local, init: value, loc },
+      {
+        kind: "if",
+        cond: { kind: "unary", op: "!", operand: isInstance, type: BOOL, loc },
+        then: [
+          ...effects.map((expr): IrStmt => ({ kind: "exprStmt", expr, loc })),
+          { kind: "exprStmt", expr: nodeThrowExpr(1, "", message, { kind: "void" }, loc), loc },
+        ],
+        else_: null,
+        loc,
+      },
+    ],
     result,
     type: result.type,
     loc,

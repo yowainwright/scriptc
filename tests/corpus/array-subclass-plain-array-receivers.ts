@@ -90,3 +90,55 @@ try {
 }
 let shifting = 1;
 console.log(realPair.sum(shifting, (shifting = 5)), shifting);
+
+// The same order on a plain array for a method the program also reads
+// through the class's prototype, whose calls read it from the instance
+// first.
+class ObservedPair extends Array<number> {
+  base = 1000;
+  sum(a: number, b: number): number {
+    return this.base + a + b + this.length;
+  }
+}
+console.log(typeof ObservedPair.prototype.sum);
+const observedPairs: ObservedPair[] = JSON.parse("[[2], []]");
+for (const pair of observedPairs) {
+  seen.length = 0;
+  try {
+    console.log(pair.sum(note("c", 3), note("d", 4)), seen.join(","));
+  } catch (e) {
+    console.log(String(e), seen.join(","));
+  }
+}
+try {
+  observedPairs[0].sum(
+    note("e", 1),
+    (() => {
+      throw new Error("observed argument threw");
+    })(),
+  );
+} catch (e) {
+  console.log(String(e));
+}
+
+// The method read off the prototype, as a value or directly, and called
+// with a plain array as `this`: the arguments evaluate first. (Node runs
+// the method on the plain array; a compiled call throws a TypeError, since
+// only an instance has the class's fields, so only the order is printed.)
+const sumValue = ObservedPair.prototype.sum;
+for (const pair of observedPairs) {
+  seen.length = 0;
+  try {
+    sumValue.call(pair, note("f", 1), note("g", 2));
+  } catch {
+    seen.push("threw");
+  }
+  console.log("value call", seen.slice(0, 2).join(","));
+  seen.length = 0;
+  try {
+    ObservedPair.prototype.sum.call(pair, note("h", 1), note("i", 2));
+  } catch {
+    seen.push("threw");
+  }
+  console.log("prototype call", seen.slice(0, 2).join(","));
+}
