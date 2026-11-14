@@ -13081,7 +13081,7 @@ export function lowerObjectMethodCall(
   // array's class after the call's arguments, as Node finds a missing
   // method only when it calls it.
   const deferred: DeferredArrayClassCheck[] = [];
-  const result = lowerObjectMethodCallOn(lowerer, call, access, deferred);
+  const result = lowerObjectMethodCallOn(lowerer, call, access, deferred, staged);
   const check = deferred[0];
   return result === null || check === undefined
     ? result
@@ -13093,6 +13093,7 @@ function lowerObjectMethodCallOn(
   call: ts.CallExpression,
   access: ts.PropertyAccessExpression,
   deferred: DeferredArrayClassCheck[],
+  staged: IrExpr | undefined,
 ): IrExpr | null {
   if (lowerer.chainBlocked(access, call)) return null;
   let mappedReceiver =
