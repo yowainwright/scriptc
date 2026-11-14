@@ -4066,16 +4066,18 @@ static bool scr_net_sock_arm_abort(ScrNetSocket *s, const ScrDyn *signal,
     scr_box_set_ref(job->caps[0], scr_net_sock_retain(s));
     scr_next_tick(job);
   } else if (add_abort != NULL) {
-    /* Node's validateAbortSignal is duck-typed (`'aborted' in signal`), and
-     * the listener install then calls signal.addEventListener — a value that
-     * only looks like a signal has no such member. Nothing is opened for it. */
-    if (!scr_events_is_abort_signal(signal)) {
-      scr_throw_error_msg(SCR_ERR_TYPE, "signal.addEventListener is not a function", 41);
-      scr_dyn_release(fn);
-      return false;
-    }
     s->abort_dispose = add_abort((ScrDyn *)signal, fn);
-    armed = s->abort_dispose != NULL;
+    if (s->abort_dispose == NULL) {
+      /* Node's validateAbortSignal is duck-typed (`'aborted' in signal`), and
+       * its listener install calls signal.addEventListener: a value that only
+       * looks like a signal fails with that TypeError. The install's own
+       * error is replaced by it, and nothing is opened for the value. */
+      if (scr_dyn_obj_get(signal, "aborted", 7) != NULL) {
+        scr_exc_clear();
+        scr_throw_error_msg(SCR_ERR_TYPE, "signal.addEventListener is not a function", 41);
+      }
+      armed = false;
+    }
   }
   scr_dyn_release(fn);
   return armed;
@@ -4519,19 +4521,21 @@ static bool scr_net_server_arm_abort(ScrNetServer *s, const ScrDyn *signal,
     return true;
   }
   if (add_abort == NULL) return true;
-  if (!scr_events_is_abort_signal(signal)) {
-    /* The duck-typed check let the value through; the install's member call
-     * is what Node fails on, and nothing may be listened on. */
-    scr_throw_error_msg(SCR_ERR_TYPE, "signal.addEventListener is not a function", 41);
-    return false;
-  }
   ScrClosure *listener = scr_net_server_abort_job(s);
   ScrDyn *fn = scr_dyn_new_func(listener, scr_net_server_abort_thunk, 0, "()", "onAbort");
   s->abort_dispose = add_abort((ScrDyn *)signal, fn);
   scr_dyn_release(fn);
-  /* The duck-typed check let a plain object through; the install rejects it
-   * and leaves Node's error pending, so the listen must not go on. */
-  return s->abort_dispose != NULL;
+  if (s->abort_dispose == NULL) {
+    /* The duck-typed check let the value through; the install's member call
+     * is what Node fails on, so its error carries that message instead and
+     * the listen does not go on. */
+    if (scr_dyn_obj_get(signal, "aborted", 7) != NULL) {
+      scr_exc_clear();
+      scr_throw_error_msg(SCR_ERR_TYPE, "signal.addEventListener is not a function", 41);
+    }
+    return false;
+  }
+  return true;
 }
 
 /* Node's toNumber: Number(x) when it is >= 0, else false (0 here). */
